@@ -1,6 +1,8 @@
 import casadi as cs
 import numpy as np
-
+from acados_template import AcadosOcp, AcadosOcpSolver, AcadosModel
+import os
+import sys
 # Model equations
 def f(x,u):
     
@@ -39,7 +41,158 @@ def discretize_dynamics_and_cost(t_horizon, n_points, m_steps_per_point, x, u, d
 
     return cs.Function('F', [x0, u], [x, q], ['x0', 'p'], ['xf', 'qf'])
 
-class QuadGuidanceOptimizer():
+class QuadGuidanceOptimizerAcados():
+    def __init__(self, t_horizon, number_of_nodes, m_steps_per_point, q_diag, r_diag, acc_limits=np.array([18.0, 18.0, 18.0])):
+        self.T = t_horizon
+        self.N = number_of_nodes
+        self.m_steps_per_point = m_steps_per_point
+        self.Q = cs.diag(q_diag)
+        self.R = cs.diag(r_diag)
+        self.min_u = (-acc_limits).tolist()
+        self.max_u = acc_limits.tolist()
+        
+        # Declare model variables
+        self.p = cs.MX.sym('p', 3)  # position
+        self.v = cs.MX.sym('v', 3)  # velocity
+        
+        # Full state vector (13-dimensional)
+        self.x = cs.vertcat(self.p, self.v)
+        self.state_dim = 6
+
+        # Control input vector
+        u1 = cs.MX.sym('ax')
+        u2 = cs.MX.sym('ay')
+        u3 = cs.MX.sym('az')
+        self.u = cs.vertcat(u1, u2, u3)
+        self.quad_xdot = self.quad_dynamics()
+        acados_model = self.acados_setup_model(
+            self.quad_xdot(x=self.x, u=self.u)['x_dot'],"quad")
+        
+        self.acados_ocp_solver = {}
+
+        nx = acados_model.x.size()[0]
+        nu = acados_model.u.size()[0]
+        ny = nx + nu
+        n_param = acados_model.p.size()[0] if isinstance(acados_model.p, cs.MX) else 0
+        
+        acados_source_path = os.environ['ACADOS_SOURCE_DIR']
+        # sys.path.insert(0, '../common')
+
+        ocp = AcadosOcp()
+        ocp.acados_include_path = acados_source_path + '/include'
+        ocp.acados_lib_path = acados_source_path + '/lib'
+        ocp.model = acados_model
+        ocp.dims.N = self.N
+        ocp.solver_options.tf = t_horizon
+
+        # Init params
+        ocp.dims.np = n_param
+        ocp.parameter_values = np.zeros(n_param)
+
+        ocp.cost.cost_type = 'LINEAR_LS'
+        ocp.cost.cost_type_e = 'LINEAR_LS'
+
+        ocp.cost.W = np.diag(np.concatenate((q_diag, r_diag)))
+        ocp.cost.W_e = np.diag(q_diag)
+        terminal_cost = 0
+        ocp.cost.W_e *= terminal_cost
+
+        ocp.cost.Vx = np.zeros((ny, nx))
+        ocp.cost.Vx[:nx, :nx] = np.eye(nx)
+        ocp.cost.Vu = np.zeros((ny, nu))
+        ocp.cost.Vu[-3:, -3:] = np.eye(nu)
+
+        ocp.cost.Vx_e = np.eye(nx)
+
+        # Initial reference trajectory (will be overwritten)
+        x_ref = np.zeros(nx)
+        ocp.cost.yref = np.concatenate((x_ref, np.array([0.0, 0.0, 0.0])))
+        ocp.cost.yref_e = x_ref
+
+        # Initial state (will be overwritten)
+        ocp.constraints.x0 = x_ref
+
+        # Set constraints
+        ocp.constraints.lbu = np.array(self.min_u)
+        ocp.constraints.ubu = np.array(self.max_u)
+        ocp.constraints.idxbu = np.array([0, 1, 2])  
+
+        # Solver options
+        ocp.solver_options.qp_solver = 'FULL_CONDENSING_HPIPM'
+        ocp.solver_options.hessian_approx = 'GAUSS_NEWTON'
+        ocp.solver_options.integrator_type = 'ERK'
+        ocp.solver_options.print_level = 0
+        ocp.solver_options.nlp_solver_type = 'SQP_RTI' 
+
+        # Compile acados OCP solver if necessary
+        self.acados_ocp_solver = AcadosOcpSolver(ocp, json_file='./' + acados_model.name + '_acados_ocp.json')
+
+
+
+    def acados_setup_model(self, symbolic_model, model_name):
+        x_dot = cs.MX.sym('x_dot', symbolic_model.shape)
+        f_impl = x_dot - symbolic_model
+        
+        # Acados dynamic model
+        model = AcadosModel()
+        model.f_expl_expr = symbolic_model
+        model.f_impl_expr = f_impl
+        model.x = self.x
+        model.xdot = x_dot
+        model.u = self.u
+        model.p = []
+        model.name = model_name
+
+        return model
+
+    def quad_dynamics(self):
+        """
+        Symbolic dynamics of the 3D quadrotor model. The state consists on: [p_xyz, a_wxyz, v_xyz, r_xyz]^T, where p
+        stands for position, a for angle (in quaternion form), v for velocity and r for body rate. The input of the
+        system is: [u_1, u_2, u_3, u_4], i.e. the activation of the four thrusters.
+        :param rdrv_d: a 3x3 diagonal matrix containing the D matrix coefficients for a linear drag model as proposed
+        by Faessler et al.
+        :return: CasADi function that computes the analytical differential state dynamics of the quadrotor model.
+        Inputs: 'x' state of quadrotor (6x1) and 'u' control input (2x1). Output: differential state vector 'x_dot'
+        (6x1)
+        """
+    
+        x_dot = cs.vertcat(self.v , self.u)
+        return cs.Function('x_dot', [self.x, self.u], [x_dot], ['x', 'u'], ['x_dot'])
+    
+    def run_optimization(self, initial_state=None, target_pos=None, target_vel=None, return_x=False):
+        
+
+        if initial_state is None:
+            initial_state = [0, 0, 0] + [0, 0, 0]
+
+        # Set initial state.
+        x_init = initial_state
+        x_init = np.stack(x_init)
+        for j in range(self.N):
+            ref = np.concatenate(( target_pos+j/self.N*self.T*target_vel, 2*target_vel, np.array([0, 0, 0])))
+            print(ref)
+            self.acados_ocp_solver.set(j, "yref", ref)
+        self.acados_ocp_solver.set(self.N, "yref", ref[:-3])
+        # Set initial condition, equality constraint
+        self.acados_ocp_solver.set(0, 'lbx', x_init)
+        self.acados_ocp_solver.set(0, 'ubx', x_init)
+        # Solve OCP
+        self.acados_ocp_solver.solve()
+
+        # Get u
+        w_opt_acados = np.ndarray((self.N, 3))
+        x_opt_acados = np.ndarray((self.N + 1, len(x_init)))
+        x_opt_acados[0, :] = self.acados_ocp_solver.get(0, "x")
+        for i in range(self.N):
+            w_opt_acados[i, :] = self.acados_ocp_solver.get(i, "u")
+            x_opt_acados[i + 1, :] = self.acados_ocp_solver.get(i + 1, "x")
+
+        w_opt_acados = np.reshape(w_opt_acados, (-1))
+        return w_opt_acados if not return_x else (w_opt_acados, x_opt_acados)
+        
+    
+class QuadGuidanceOptimizerCasadi():
     def __init__(self, T, N, m_steps_per_point, q_diag, r_diag, acc_limits=np.array([18.0, 18.0, 18.0])):
         
         self.T = T
@@ -136,11 +289,7 @@ class QuadGuidanceOptimizer():
         a3_opt = w_opt[8::9]
         return w_opt
 
-
-
-if __name__=="__main__":
-
-
+def main_casadi():
     target_pos = np.array([5,5,0])
     target_vel = np.array([2,0,-2])
     x_ref = cs.vertcat(target_pos, target_vel)
@@ -156,11 +305,11 @@ if __name__=="__main__":
     q_diag = [0]*3 + [0,0,0]
     r_diag = [1]*3
 
-    quad_optimizer = QuadGuidanceOptimizer(T, N, 4, q_diag, r_diag, np.array(max_u))
+    quad_optimizer = QuadGuidanceOptimizerCasadi(T, N, 4, q_diag, r_diag, np.array(max_u))
     
     w_opt = quad_optimizer.solve(initial_state=initial_state, target_pos=target_pos, target_vel=target_vel)
 
-        
+    
 
     # Plot the solution
     x1_opt = w_opt[0::9]
@@ -219,4 +368,45 @@ if __name__=="__main__":
     axs.plot(x1_opt, x2_opt)
     axs.set_aspect('equal', 'box')
     plt.show()
+
+def main_acados():
+    import time
+    import matplotlib.pyplot as plt
+    target_pos = np.array([1,1,0])
+    target_vel = np.array([0,0,0])
+    x_ref = cs.vertcat(target_pos, target_vel)
+    
+    
+    initial_state = np.array([0.0, 0.0, 0.0, 0,0,0])
+    initial_u = [0,0,0.0]
+    min_u = 3*[-18.0]
+    max_u = 3*[18.0]
+    m_steps_per_point = 4
+    T = 3.0 # Time horizon
+    N = 50  # number of control intervals
+    q_diag = [3]*3 + [0,0,0]
+    r_diag = [0.1]*3
+
+    quad_optimizer = QuadGuidanceOptimizerAcados(T, N, 4, q_diag, r_diag, np.array(max_u))
+    t_start = time.time()
+    w_opt, x_opt= quad_optimizer.run_optimization(initial_state=initial_state,target_pos=target_pos, target_vel=target_vel, return_x=True)
+    print("time:", time.time()-t_start)
+    print("w_opt:", w_opt)
+    print("x_opt:", x_opt)
+    plt.figure(1)
+    plt.clf()
+    plt.plot(x_opt[:, 0:3])
+    
+    plt.figure(2)
+    plt.clf()
+    plt.plot(x_opt[:, 3:6])
+    
+    plt.figure(3)
+    plt.clf()
+    plt.step(np.linspace(0,T,N), w_opt.reshape(3,N).T)
+    plt.show()
+    
+if __name__=="__main__":
+    main_acados()
+
     

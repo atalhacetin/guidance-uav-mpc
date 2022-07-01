@@ -4,7 +4,7 @@ import casadi as cs
 import matplotlib.pyplot as plt
 from mpl_toolkits import mplot3d
 
-from quad_guidance_optimizer import QuadGuidanceOptimizer
+from quad_guidance_optimizer import QuadGuidanceOptimizerCasadi
 
 if __name__=="__main__":
     
@@ -25,7 +25,7 @@ if __name__=="__main__":
     q_diag = [0]*3 + [0]*3
     r_diag = [0.1]*3
 
-    quad_optimizer = QuadGuidanceOptimizer(T, N, 4, q_diag, r_diag, np.array(max_u))
+    quad_optimizer = QuadGuidanceOptimizerCasadi(T, N, 4, q_diag, r_diag, np.array(max_u))
     
     list_pos = []
     list_vel = []
@@ -44,7 +44,7 @@ if __name__=="__main__":
         else:
             time_to_go = np.linalg.norm(target_pos - x[0:3]) / np.abs(np.linalg.norm(target_vel)+ avg_vel)
 
-        quad_optimizer = QuadGuidanceOptimizer(time_to_go, N, 4, q_diag, r_diag, np.array(max_u))
+        quad_optimizer = QuadGuidanceOptimizerCasadi(time_to_go, N, 4, q_diag, r_diag, np.array(max_u))
         w_opt = quad_optimizer.solve(initial_state=x, target_pos=target_pos, target_vel=target_vel)
         a1_opt = w_opt[6::9]
         a2_opt = w_opt[7::9]
