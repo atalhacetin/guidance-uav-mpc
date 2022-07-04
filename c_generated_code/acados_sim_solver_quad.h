@@ -37,10 +37,10 @@
 #include "acados_c/sim_interface.h"
 #include "acados_c/external_function_interface.h"
 
-#define QUAD_NX     6
+#define QUAD_NX     9
 #define QUAD_NZ     0
 #define QUAD_NU     3
-#define QUAD_NP     0
+#define QUAD_NP     3
 
 #ifdef __cplusplus
 extern "C" {

@@ -224,7 +224,7 @@ ocp_nlp_dims* quad_acados_create_2_create_and_set_dimensions(quad_solver_capsule
     nbx[0]  = NBX0;
     nsbx[0] = 0;
     ns[0] = NS - NSBX;
-    nbxe[0] = 6;
+    nbxe[0] = 9;
     ny[0] = NY0;
 
     // terminal - common
@@ -299,7 +299,7 @@ void quad_acados_create_3_create_and_set_functions(quad_solver_capsule* capsule)
         capsule->__CAPSULE_FNC__.casadi_sparsity_in = & __MODEL_BASE_FNC__ ## _sparsity_in; \
         capsule->__CAPSULE_FNC__.casadi_sparsity_out = & __MODEL_BASE_FNC__ ## _sparsity_out; \
         capsule->__CAPSULE_FNC__.casadi_work = & __MODEL_BASE_FNC__ ## _work; \
-        external_function_param_casadi_create(&capsule->__CAPSULE_FNC__ , 0); \
+        external_function_param_casadi_create(&capsule->__CAPSULE_FNC__ , 3); \
     }while(false)
 
 
@@ -326,7 +326,14 @@ void quad_acados_create_3_create_and_set_functions(quad_solver_capsule* capsule)
  * Internal function for quad_acados_create: step 4
  */
 void quad_acados_create_4_set_default_parameters(quad_solver_capsule* capsule) {
-    // no parameters defined
+    const int N = capsule->nlp_solver_plan->N;
+    // initialize parameters to nominal value
+    double* p = calloc(NP, sizeof(double));
+
+    for (int i = 0; i <= N; i++) {
+        quad_acados_update_params(capsule, i, p, NP);
+    }
+    free(p);
 }
 
 
@@ -352,7 +359,7 @@ void quad_acados_create_5_set_nlp_in(quad_solver_capsule* capsule, const int N, 
     if (new_time_steps) {
         quad_acados_update_time_steps(capsule, N, new_time_steps);
     } else {// all time_steps are identical
-        double time_step = 0.06;
+        double time_step = 0.04;
         for (int i = 0; i < N; i++)
         {
             ocp_nlp_in_set(nlp_config, nlp_dims, nlp_in, i, "Ts", &time_step);
@@ -371,12 +378,9 @@ void quad_acados_create_5_set_nlp_in(quad_solver_capsule* capsule, const int N, 
     /**** Cost ****/
     double* W_0 = calloc(NY0*NY0, sizeof(double));
     // change only the non-zero elements:
-    W_0[0+(NY0) * 0] = 3;
-    W_0[1+(NY0) * 1] = 3;
-    W_0[2+(NY0) * 2] = 3;
-    W_0[6+(NY0) * 6] = 0.1;
-    W_0[7+(NY0) * 7] = 0.1;
-    W_0[8+(NY0) * 8] = 0.1;
+    W_0[9+(NY0) * 9] = 0.1;
+    W_0[10+(NY0) * 10] = 0.1;
+    W_0[11+(NY0) * 11] = 0.1;
     ocp_nlp_cost_model_set(nlp_config, nlp_dims, nlp_in, 0, "W", W_0);
     free(W_0);
 
@@ -386,12 +390,9 @@ void quad_acados_create_5_set_nlp_in(quad_solver_capsule* capsule, const int N, 
     free(yref_0);
     double* W = calloc(NY*NY, sizeof(double));
     // change only the non-zero elements:
-    W[0+(NY) * 0] = 3;
-    W[1+(NY) * 1] = 3;
-    W[2+(NY) * 2] = 3;
-    W[6+(NY) * 6] = 0.1;
-    W[7+(NY) * 7] = 0.1;
-    W[8+(NY) * 8] = 0.1;
+    W[9+(NY) * 9] = 0.1;
+    W[10+(NY) * 10] = 0.1;
+    W[11+(NY) * 11] = 0.1;
 
     double* yref = calloc(NY, sizeof(double));
     // change only the non-zero elements:
@@ -411,13 +412,16 @@ void quad_acados_create_5_set_nlp_in(quad_solver_capsule* capsule, const int N, 
     Vx_0[3+(NY0) * 3] = 1;
     Vx_0[4+(NY0) * 4] = 1;
     Vx_0[5+(NY0) * 5] = 1;
+    Vx_0[6+(NY0) * 6] = 1;
+    Vx_0[7+(NY0) * 7] = 1;
+    Vx_0[8+(NY0) * 8] = 1;
     ocp_nlp_cost_model_set(nlp_config, nlp_dims, nlp_in, 0, "Vx", Vx_0);
     free(Vx_0);
     double* Vu_0 = calloc(NY0*NU, sizeof(double));
     // change only the non-zero elements:
-    Vu_0[6+(NY0) * 0] = 1;
-    Vu_0[7+(NY0) * 1] = 1;
-    Vu_0[8+(NY0) * 2] = 1;
+    Vu_0[9+(NY0) * 0] = 1;
+    Vu_0[10+(NY0) * 1] = 1;
+    Vu_0[11+(NY0) * 2] = 1;
     ocp_nlp_cost_model_set(nlp_config, nlp_dims, nlp_in, 0, "Vu", Vu_0);
     free(Vu_0);
     double* Vx = calloc(NY*NX, sizeof(double));
@@ -428,6 +432,9 @@ void quad_acados_create_5_set_nlp_in(quad_solver_capsule* capsule, const int N, 
     Vx[3+(NY) * 3] = 1;
     Vx[4+(NY) * 4] = 1;
     Vx[5+(NY) * 5] = 1;
+    Vx[6+(NY) * 6] = 1;
+    Vx[7+(NY) * 7] = 1;
+    Vx[8+(NY) * 8] = 1;
     for (int i = 1; i < N; i++)
     {
         ocp_nlp_cost_model_set(nlp_config, nlp_dims, nlp_in, i, "Vx", Vx);
@@ -438,9 +445,9 @@ void quad_acados_create_5_set_nlp_in(quad_solver_capsule* capsule, const int N, 
     double* Vu = calloc(NY*NU, sizeof(double));
     // change only the non-zero elements:
     
-    Vu[6+(NY) * 0] = 1;
-    Vu[7+(NY) * 1] = 1;
-    Vu[8+(NY) * 2] = 1;
+    Vu[9+(NY) * 0] = 1;
+    Vu[10+(NY) * 1] = 1;
+    Vu[11+(NY) * 2] = 1;
 
     for (int i = 1; i < N; i++)
     {
@@ -467,6 +474,9 @@ void quad_acados_create_5_set_nlp_in(quad_solver_capsule* capsule, const int N, 
     Vx_e[3+(NYN) * 3] = 1;
     Vx_e[4+(NYN) * 4] = 1;
     Vx_e[5+(NYN) * 5] = 1;
+    Vx_e[6+(NYN) * 6] = 1;
+    Vx_e[7+(NYN) * 7] = 1;
+    Vx_e[8+(NYN) * 8] = 1;
     ocp_nlp_cost_model_set(nlp_config, nlp_dims, nlp_in, N, "Vx", Vx_e);
     free(Vx_e);
 
@@ -483,6 +493,9 @@ void quad_acados_create_5_set_nlp_in(quad_solver_capsule* capsule, const int N, 
     idxbx0[3] = 3;
     idxbx0[4] = 4;
     idxbx0[5] = 5;
+    idxbx0[6] = 6;
+    idxbx0[7] = 7;
+    idxbx0[8] = 8;
 
     double* lubx0 = calloc(2*NBX0, sizeof(double));
     double* lbx0 = lubx0;
@@ -495,7 +508,7 @@ void quad_acados_create_5_set_nlp_in(quad_solver_capsule* capsule, const int N, 
     free(idxbx0);
     free(lubx0);
     // idxbxe_0
-    int* idxbxe_0 = malloc(6 * sizeof(int));
+    int* idxbxe_0 = malloc(9 * sizeof(int));
     
     idxbxe_0[0] = 0;
     idxbxe_0[1] = 1;
@@ -503,6 +516,9 @@ void quad_acados_create_5_set_nlp_in(quad_solver_capsule* capsule, const int N, 
     idxbxe_0[3] = 3;
     idxbxe_0[4] = 4;
     idxbxe_0[5] = 5;
+    idxbxe_0[6] = 6;
+    idxbxe_0[7] = 7;
+    idxbxe_0[8] = 8;
     ocp_nlp_constraints_model_set(nlp_config, nlp_dims, nlp_in, 0, "idxbxe", idxbxe_0);
     free(idxbxe_0);
 
@@ -549,6 +565,28 @@ void quad_acados_create_5_set_nlp_in(quad_solver_capsule* capsule, const int N, 
 
     /* terminal constraints */
 
+    // set up bounds for last stage
+    // x
+    int* idxbx_e = malloc(NBXN * sizeof(int));
+    
+    idxbx_e[0] = 0;
+    idxbx_e[1] = 1;
+    idxbx_e[2] = 2;
+    idxbx_e[3] = 3;
+    idxbx_e[4] = 4;
+    idxbx_e[5] = 5;
+    idxbx_e[6] = 6;
+    idxbx_e[7] = 7;
+    idxbx_e[8] = 8;
+    double* lubx_e = calloc(2*NBXN, sizeof(double));
+    double* lbx_e = lubx_e;
+    double* ubx_e = lubx_e + NBXN;
+    
+    ocp_nlp_constraints_model_set(nlp_config, nlp_dims, nlp_in, N, "idxbx", idxbx_e);
+    ocp_nlp_constraints_model_set(nlp_config, nlp_dims, nlp_in, N, "lbx", lbx_e);
+    ocp_nlp_constraints_model_set(nlp_config, nlp_dims, nlp_in, N, "ubx", ubx_e);
+    free(idxbx_e);
+    free(lubx_e);
 
 
 
@@ -795,12 +833,39 @@ int quad_acados_update_params(quad_solver_capsule* capsule, int stage, double *p
 {
     int solver_status = 0;
 
-    int casadi_np = 0;
+    int casadi_np = 3;
     if (casadi_np != np) {
         printf("acados_update_params: trying to set %i parameters for external functions."
             " External function has %i parameters. Exiting.\n", np, casadi_np);
         exit(1);
     }
+    const int N = capsule->nlp_solver_plan->N;
+    if (stage < N && stage >= 0)
+    {
+        capsule->forw_vde_casadi[stage].set_param(capsule->forw_vde_casadi+stage, p);
+        capsule->expl_ode_fun[stage].set_param(capsule->expl_ode_fun+stage, p);
+    
+
+        // constraints
+    
+
+        // cost
+        if (stage == 0)
+        {
+        }
+        else // 0 < stage < N
+        {
+        }
+    }
+
+    else // stage == N
+    {
+        // terminal shooting node has no dynamics
+        // cost
+        // constraints
+    
+    }
+
 
     return solver_status;
 }
@@ -810,7 +875,7 @@ int quad_acados_update_params_sparse(quad_solver_capsule * capsule, int stage, i
 {
     int solver_status = 0;
 
-    int casadi_np = 0;
+    int casadi_np = 3;
     if (casadi_np < n_update) {
         printf("quad_acados_update_params_sparse: trying to set %d parameters for external functions."
             " External function has %d parameters. Exiting.\n", n_update, casadi_np);
@@ -825,6 +890,33 @@ int quad_acados_update_params_sparse(quad_solver_capsule * capsule, int stage, i
     //     }
     //     printf("param %d value %e\n", idx[i], p[i]);
     // }
+    const int N = capsule->nlp_solver_plan->N;
+    if (stage < N && stage >= 0)
+    {
+        capsule->forw_vde_casadi[stage].set_param_sparse(capsule->forw_vde_casadi+stage, n_update, idx, p);
+        capsule->expl_ode_fun[stage].set_param_sparse(capsule->expl_ode_fun+stage, n_update, idx, p);
+    
+
+        // constraints
+    
+
+        // cost
+        if (stage == 0)
+        {
+        }
+        else // 0 < stage < N
+        {
+        }
+    }
+
+    else // stage == N
+    {
+        // terminal shooting node has no dynamics
+        // cost
+        // constraints
+    
+    }
+
 
     return 0;
 }
