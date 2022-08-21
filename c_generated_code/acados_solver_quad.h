@@ -39,12 +39,12 @@
 #include "acados_c/ocp_nlp_interface.h"
 #include "acados_c/external_function_interface.h"
 
-#define QUAD_NX     9
+#define QUAD_NX     11
 #define QUAD_NZ     0
 #define QUAD_NU     3
 #define QUAD_NP     3
 #define QUAD_NBX    0
-#define QUAD_NBX0   9
+#define QUAD_NBX0   11
 #define QUAD_NBU    3
 #define QUAD_NSBX   0
 #define QUAD_NSBU   0
@@ -58,12 +58,12 @@
 #define QUAD_NS     0
 #define QUAD_NSN    0
 #define QUAD_NG     0
-#define QUAD_NBXN   9
+#define QUAD_NBXN   6
 #define QUAD_NGN    0
-#define QUAD_NY0    12
-#define QUAD_NY     12
-#define QUAD_NYN    9
-#define QUAD_N      50
+#define QUAD_NY0    14
+#define QUAD_NY     14
+#define QUAD_NYN    11
+#define QUAD_N      10
 #define QUAD_NH     0
 #define QUAD_NPHI   0
 #define QUAD_NHN    0

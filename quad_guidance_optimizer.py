@@ -42,7 +42,7 @@ def discretize_dynamics_and_cost(t_horizon, n_points, m_steps_per_point, x, u, d
     return cs.Function('F', [x0, u], [x, q], ['x0', 'p'], ['xf', 'qf'])
 
 class QuadGuidanceOptimizerAcados():
-    def __init__(self, t_horizon, number_of_nodes, m_steps_per_point, q_diag, r_diag, acc_limits=np.array([18.0, 18.0, 18.0])):
+    def __init__(self, t_horizon, number_of_nodes, m_steps_per_point, q_diag, r_diag, acc_limits=np.array([18.0, 18.0, 18.0]), input_cost_type="ISI"):
         self.T = t_horizon
         self.N = number_of_nodes
         self.m_steps_per_point = m_steps_per_point
@@ -50,17 +50,10 @@ class QuadGuidanceOptimizerAcados():
         self.R = cs.diag(r_diag)
         self.min_u = (-acc_limits).tolist()
         self.max_u = acc_limits.tolist()
-        
+        self.input_cost_type = input_cost_type
         # Init target position and velocity (will be overwritten )
         self.target_pos = np.array([0.0, 0.0, 0.0])
         self.target_vel = np.array([0.0, 0.0, 0.0])
-        # Declare model variables
-        self.p = cs.MX.sym('p', 3)  # position
-        self.v = cs.MX.sym('v', 3)  # velocity
-        self.augmented_state = cs.MX.sym('aug', 3)
-        # Full state vector (6-dimensional)
-        self.x = cs.vertcat(self.p, self.v, self.augmented_state)
-        self.state_dim = 9
 
         # Control input vector
         u1 = cs.MX.sym('ax')
@@ -69,7 +62,25 @@ class QuadGuidanceOptimizerAcados():
         self.u = cs.vertcat(u1, u2, u3)
         self.target_vel_param = cs.MX.sym('target_vel',3)
 
-        self.quad_xdot = self.augmented_quad_dynamics()
+        # Declare model variables
+        self.p = cs.MX.sym('p', 3)  # position
+        self.v = cs.MX.sym('v', 3)  # velocity
+        self.augmented_state = cs.MX.sym('aug', 3) # augmented state for impact angle
+
+        if self.input_cost_type=="ITSI":
+            self.itsi_cost_state1 = cs.MX.sym('itsi_state1') # states for ITSI(Integral Time Square Input) cost
+            self.itsi_cost_state2 = cs.MX.sym('itsi_state2') # states for ITSI(Integral Time Square Input) cost
+            # Full state vector (6-dimensional)
+            self.x = cs.vertcat(self.p, self.v, self.augmented_state, self.itsi_cost_state1, self.itsi_cost_state2)
+            self.quad_xdot = self.augmented_quad_dynamics_with_itsi_cost()
+        elif self.input_cost_type=="ISI":# state for ISI(Integral Square Input) cost
+            self.x = cs.vertcat(self.p, self.v, self.augmented_state)
+            self.quad_xdot = self.augmented_quad_dynamics()
+        else:
+            raise Exception("Unknown input cost type")
+
+        self.state_dim = self.x.shape[0]
+        
         acados_model = self.acados_setup_model(
             self.quad_xdot(x=self.x, u=self.u)['x_dot'],"quad")
         
@@ -117,10 +128,10 @@ class QuadGuidanceOptimizerAcados():
         # Initial state (will be overwritten)
         ocp.constraints.x0 = x_ref
 
-        # Terminal Constraints
-        ocp.constraints.lbx_e = x_ref
-        ocp.constraints.ubx_e = x_ref
-        ocp.constraints.idxbx_e = np.array([0, 1, 2,3,4,5,6,7,8])
+        # Terminal Constraints (will be overwritten)
+        ocp.constraints.lbx_e = np.zeros(6)
+        ocp.constraints.ubx_e = np.zeros(6)
+        ocp.constraints.idxbx_e = np.array([0,1,2,6,7,8])
         # Set constraints
         ocp.constraints.lbu = np.array(self.min_u)
         ocp.constraints.ubu = np.array(self.max_u)
@@ -135,10 +146,7 @@ class QuadGuidanceOptimizerAcados():
 
         # Compile acados OCP solver if necessary
         self.acados_ocp_solver = AcadosOcpSolver(ocp, json_file='./' + acados_model.name + '_acados_ocp.json')
-        print("started")
-
-
-
+        
     def acados_setup_model(self, symbolic_model, model_name):
         x_dot = cs.MX.sym('x_dot', symbolic_model.shape)
         f_impl = x_dot - symbolic_model
@@ -154,14 +162,24 @@ class QuadGuidanceOptimizerAcados():
         model.name = model_name
 
         return model
-
+    def set_time_horizon(self, t_horizon):
+        self.T = t_horizon
+        time_steps = np.linspace(0, self.T, self.N)
+        print("Time steps: ", time_steps)
+        self.acados_ocp_solver.set_new_time_steps(time_steps)
+        
     def quad_dynamics(self):
         x_dot = cs.vertcat(self.v , self.u)
         return cs.Function('x_dot', [self.x, self.u], [x_dot], ['x', 'u'], ['x_dot'])
 
     def augmented_quad_dynamics(self):
         x_dot = cs.vertcat(self.v , self.u, cs.cross(self.u, self.target_vel_param)) # ???
-        
+        return cs.Function('x_dot', [self.x, self.u], [x_dot], ['x', 'u'], ['x_dot'])
+    
+    def augmented_quad_dynamics_with_itsi_cost(self):
+        isi_cost = cs.dot(self.u, self.u)
+
+        x_dot = cs.vertcat(self.v , self.u, cs.cross(self.u, self.target_vel_param), cs.dot(self.u, self.u), self.itsi_cost_state1)
         return cs.Function('x_dot', [self.x, self.u], [x_dot], ['x', 'u'], ['x_dot'])
     
     def run_optimization(self, initial_state=None, target_pos=None, target_vel=None, return_x=False):
@@ -173,29 +191,49 @@ class QuadGuidanceOptimizerAcados():
         # Set initial state.
         x_init = initial_state
         x_init = np.stack(x_init)
-        for j in range(self.N):
-            self.acados_ocp_solver.set(j, 'p', np.array(target_vel))
-            # ref = np.concatenate(( target_pos+j/self.N*self.T*target_vel, 2*target_vel, np.array([0, 0, 0]),np.array([0, 0, 0])))
-            ref = np.concatenate(( target_pos+self.T*target_vel, 2*target_vel, np.array([0, 0, 0]),np.array([0, 0, 0])))
-            self.acados_ocp_solver.set(j, "yref", ref)
-        self.acados_ocp_solver.set(self.N, "yref", ref[:-3])
-        self.acados_ocp_solver.set(self.N, 'p', np.array(target_vel))
-        # Set initial condition, equality constraint
-        self.acados_ocp_solver.set(0, 'lbx', x_init)
-        self.acados_ocp_solver.set(0, 'ubx', x_init)
-        _ref = np.concatenate(( target_pos+self.T*target_vel, 2*target_vel, np.array([0, 0, 0])))
-        print("ref:", _ref)
-        # self.acados_ocp_solver.set(self.N, 'x',_ref)
-        self.acados_ocp_solver.constraints_set(self.N, 'lbx', _ref)
-        self.acados_ocp_solver.constraints_set(self.N, 'ubx', _ref)
+        # TODO set new time steps according to time to go
+        #self.acados_ocp_solver.set_new_time_steps()
+        if self.input_cost_type == "ISI":
+            for j in range(self.N):
+                self.acados_ocp_solver.set(j, 'p', np.array(target_vel))
+                # ref = np.concatenate(( target_pos+j/self.N*self.T*target_vel, 2*target_vel, np.array([0, 0, 0]),np.array([0, 0, 0])))
+                ref = np.concatenate(( target_pos+self.T*target_vel, 2*target_vel, np.array([0, 0, 0]),np.array([0, 0, 0])))
+                self.acados_ocp_solver.set(j, "yref", ref)
+            self.acados_ocp_solver.set(self.N, "yref", ref[:-3])
+            self.acados_ocp_solver.set(self.N, 'p', np.array(target_vel))
+            # Set initial condition, equality constraint
+            self.acados_ocp_solver.set(0, 'lbx', x_init)
+            self.acados_ocp_solver.set(0, 'ubx', x_init)
+
+            # set terminal constraints
+            _ref = np.concatenate((target_pos+self.T*target_vel, np.array([0, 0, 0])))
+            self.acados_ocp_solver.constraints_set(self.N, 'lbx', _ref)
+            self.acados_ocp_solver.constraints_set(self.N, 'ubx', _ref)
+            x_opt_acados = np.ndarray((self.N + 1, len(x_init)))
         
+        if self.input_cost_type == "ITSI":
+            for j in range(self.N):
+                self.acados_ocp_solver.set(j, 'p', np.array(target_vel))
+                # ref = np.concatenate(( target_pos+j/self.N*self.T*target_vel, 2*target_vel, np.array([0, 0, 0]),np.array([0, 0, 0])))
+                ref = np.concatenate(( target_pos+self.T*target_vel, 2*target_vel, np.array([0, 0, 0]),np.array([0,0]),np.array([0, 0, 0])))
+                self.acados_ocp_solver.set(j, "yref", ref)
+            self.acados_ocp_solver.set(self.N, "yref", ref[:-3])
+            self.acados_ocp_solver.set(self.N, 'p', np.array(target_vel))
+            # Set initial condition, equality constraint
+            self.acados_ocp_solver.set(0, 'lbx', np.concatenate((x_init, np.array([0,0]))))
+            self.acados_ocp_solver.set(0, 'ubx', np.concatenate((x_init, np.array([0,0]))))
+            _ref = np.concatenate(( target_pos+self.T*target_vel, np.array([0, 0, 0])))
+            
+            # self.acados_ocp_solver.set(self.N, 'x',_ref)
+            self.acados_ocp_solver.constraints_set(self.N, 'lbx', _ref)
+            self.acados_ocp_solver.constraints_set(self.N, 'ubx', _ref)
+            x_opt_acados = np.ndarray((self.N + 1, len(x_init)+2))
 
         # Solve OCP
         self.acados_ocp_solver.solve()
         
         # Get u
         w_opt_acados = np.ndarray((self.N, 3))
-        x_opt_acados = np.ndarray((self.N + 1, len(x_init)))
         x_opt_acados[0, :] = self.acados_ocp_solver.get(0, "x")
         for i in range(self.N):
             w_opt_acados[i, :] = self.acados_ocp_solver.get(i, "u")
@@ -302,7 +340,7 @@ class QuadGuidanceOptimizerCasadi():
         a3_opt = w_opt[8::9]
         return w_opt
 
-def main_casadi():
+def test_casadi():
     target_pos = np.array([5,5,0])
     target_vel = np.array([2,0,-2])
     x_ref = cs.vertcat(target_pos, target_vel)
@@ -382,7 +420,7 @@ def main_casadi():
     axs.set_aspect('equal', 'box')
     plt.show()
 
-def main_acados():
+def test_acados():
     import time
     import matplotlib.pyplot as plt
     target_pos = np.array([1,1,0])
@@ -395,9 +433,9 @@ def main_acados():
     min_u = 3*[-18.0]
     max_u = 3*[18.0]
     m_steps_per_point = 4
-    T = 2.0 # Time horizon
+    T = 1.0 # Time horizon
     N = 50  # number of control intervals
-    q_diag = [0]*3 + [0,0,0] + [0]*3
+    q_diag = [0]*3 + [0,0,0] + [1]*3
     r_diag = [0.1]*3
 
     quad_optimizer = QuadGuidanceOptimizerAcados(T, N, 4, q_diag, r_diag, np.array(max_u))
@@ -435,8 +473,63 @@ def main_acados():
     plt.plot(x_opt[:,-3:])
     plt.title("cross_product")
     plt.show()
+
+def test_acados_itsi():
+    import time
+    import matplotlib.pyplot as plt
+    target_pos = np.array([1,1,0])
+    target_vel = np.array([0,1,0])
+    x_ref = cs.vertcat(target_pos, target_vel)
     
+    
+    initial_state = np.array([0.0, 0.0, 0.0, 0,0,0,0,0,0])
+    initial_u = [0,0,0.0]
+    min_u = 3*[-18.0]
+    max_u = 3*[18.0]
+    m_steps_per_point = 4
+    T = 1.0 # Time horizon
+    N = 10  # number of control intervals
+    q_diag = [0]*3 + [0,0,0] + [0]*3 + [0,1]
+    r_diag = [0.]*3
+
+    quad_optimizer = QuadGuidanceOptimizerAcados(T, N, 4, q_diag, r_diag, np.array(max_u), input_cost_type="ITSI")
+    
+    # quad_optimizer.set_time_horizon(2.0)
+    t_start = time.time()
+    w_opt, x_opt= quad_optimizer.run_optimization(initial_state=initial_state,target_pos=target_pos, target_vel=target_vel, return_x=True)
+    print("time:", time.time()-t_start)
+
+    # print("w_opt:", w_opt)
+    # print("x_opt:", x_opt)
+    # print("cross_product:", x_opt[:,-3:] )
+    plt.figure(1)
+    plt.clf()
+    plt.plot(x_opt[:, 0:3])
+    
+    plt.figure(2)
+    plt.clf()
+    plt.plot(x_opt[:, 3:6])
+    
+    plt.figure(3)
+    plt.clf()
+    plt.step(np.linspace(0,T,N), w_opt.reshape(3,N).T)
+    
+    plt.figure(4)
+    ax = plt.axes(projection='3d')
+    ax.plot3D(x_opt[:, 0], x_opt[:, 1],x_opt[:, 2], color="blue")
+    ax.set_xlabel("x")
+    ax.set_ylabel("y")
+    ax.set_zlabel("z")
+    
+    
+
+    plt.figure(6)
+    plt.clf()
+    plt.plot(x_opt[:,-3:])
+    plt.title("cross_product")
+    plt.show()
+
 if __name__=="__main__":
-    main_acados()
+    test_acados_itsi()
 
     

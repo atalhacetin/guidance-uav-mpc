@@ -107,6 +107,8 @@ int main()
     idxbx0[6] = 6;
     idxbx0[7] = 7;
     idxbx0[8] = 8;
+    idxbx0[9] = 9;
+    idxbx0[10] = 10;
 
     double lbx0[NBX0];
     double ubx0[NBX0];
@@ -128,6 +130,10 @@ int main()
     ubx0[7] = 0;
     lbx0[8] = 0;
     ubx0[8] = 0;
+    lbx0[9] = 0;
+    ubx0[9] = 0;
+    lbx0[10] = 0;
+    ubx0[10] = 0;
 
     ocp_nlp_constraints_model_set(nlp_config, nlp_dims, nlp_in, 0, "idxbx", idxbx0);
     ocp_nlp_constraints_model_set(nlp_config, nlp_dims, nlp_in, 0, "lbx", lbx0);
@@ -144,6 +150,8 @@ int main()
     x_init[6] = 0.0;
     x_init[7] = 0.0;
     x_init[8] = 0.0;
+    x_init[9] = 0.0;
+    x_init[10] = 0.0;
 
     // initial value for control input
     double u0[NU];

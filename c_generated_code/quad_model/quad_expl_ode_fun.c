@@ -25,6 +25,7 @@ extern "C" {
 
 /* Add prefix to internal symbols */
 #define casadi_copy CASADI_PREFIX(copy)
+#define casadi_dot CASADI_PREFIX(dot)
 #define casadi_f0 CASADI_PREFIX(f0)
 #define casadi_s0 CASADI_PREFIX(s0)
 #define casadi_s1 CASADI_PREFIX(s1)
@@ -55,10 +56,17 @@ void casadi_copy(const casadi_real* x, casadi_int n, casadi_real* y) {
   }
 }
 
-static const casadi_int casadi_s0[13] = {9, 1, 0, 9, 0, 1, 2, 3, 4, 5, 6, 7, 8};
+casadi_real casadi_dot(casadi_int n, const casadi_real* x, const casadi_real* y) {
+  casadi_int i;
+  casadi_real r = 0;
+  for (i=0; i<n; ++i) r += *x++ * *y++;
+  return r;
+}
+
+static const casadi_int casadi_s0[15] = {11, 1, 0, 11, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10};
 static const casadi_int casadi_s1[7] = {3, 1, 0, 3, 0, 1, 2};
 
-/* quad_expl_ode_fun:(i0[9],i1[3],i2[3])->(o0[9]) */
+/* quad_expl_ode_fun:(i0[11],i1[3],i2[3])->(o0[11]) */
 static int casadi_f0(const casadi_real** arg, casadi_real** res, casadi_int* iw, casadi_real* w, int mem) {
   casadi_real *rr, *ss;
   casadi_real *w0=w+0, w1, w2, w3, w4, w5, w6, w7;
@@ -94,22 +102,35 @@ static int casadi_f0(const casadi_real** arg, casadi_real** res, casadi_int* iw,
   if (res[0]) res[0][6] = w5;
   /* #15: @5 = @0[0] */
   for (rr=(&w5), ss=w0+0; ss!=w0+1; ss+=1) *rr++ = *ss;
-  /* #16: @3 = (@3*@5) */
-  w3 *= w5;
+  /* #16: @7 = (@3*@5) */
+  w7  = (w3*w5);
   /* #17: @4 = (@1*@4) */
   w4  = (w1*w4);
-  /* #18: @3 = (@3-@4) */
-  w3 -= w4;
-  /* #19: output[0][5] = @3 */
-  if (res[0]) res[0][7] = w3;
-  /* #20: @1 = (@1*@6) */
-  w1 *= w6;
-  /* #21: @2 = (@2*@5) */
-  w2 *= w5;
-  /* #22: @1 = (@1-@2) */
-  w1 -= w2;
-  /* #23: output[0][6] = @1 */
-  if (res[0]) res[0][8] = w1;
+  /* #18: @7 = (@7-@4) */
+  w7 -= w4;
+  /* #19: output[0][5] = @7 */
+  if (res[0]) res[0][7] = w7;
+  /* #20: @6 = (@1*@6) */
+  w6  = (w1*w6);
+  /* #21: @5 = (@2*@5) */
+  w5  = (w2*w5);
+  /* #22: @6 = (@6-@5) */
+  w6 -= w5;
+  /* #23: output[0][6] = @6 */
+  if (res[0]) res[0][8] = w6;
+  /* #24: @0 = vertcat(@1, @2, @3) */
+  rr=w0;
+  *rr++ = w1;
+  *rr++ = w2;
+  *rr++ = w3;
+  /* #25: @1 = dot(@0, @0) */
+  w1 = casadi_dot(3, w0, w0);
+  /* #26: output[0][7] = @1 */
+  if (res[0]) res[0][9] = w1;
+  /* #27: @1 = input[0][3] */
+  w1 = arg[0] ? arg[0][9] : 0;
+  /* #28: output[0][8] = @1 */
+  if (res[0]) res[0][10] = w1;
   return 0;
 }
 
@@ -184,7 +205,7 @@ CASADI_SYMBOL_EXPORT const casadi_int* quad_expl_ode_fun_sparsity_out(casadi_int
 }
 
 CASADI_SYMBOL_EXPORT int quad_expl_ode_fun_work(casadi_int *sz_arg, casadi_int* sz_res, casadi_int *sz_iw, casadi_int *sz_w) {
-  if (sz_arg) *sz_arg = 5;
+  if (sz_arg) *sz_arg = 6;
   if (sz_res) *sz_res = 2;
   if (sz_iw) *sz_iw = 0;
   if (sz_w) *sz_w = 10;
